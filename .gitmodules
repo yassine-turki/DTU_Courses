@@ -1,6 +1,4 @@
 [submodule "Project"]
 	path = Computational_Tools_for_DS/Project
 	url = https://github.com/mathilde-cros/Computational-Tools-For-Data-Science-Group46.git
-[submodule "R_for_Bio_DS/group_07_project"]
-	path = R_for_Bio_DS/group_07_project
-	url = https://github.com/rforbiodatascience23/group_07_project.git
+

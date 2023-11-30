@@ -1,3 +1,6 @@
 [submodule "Computational_Tools_for_DS/Computational-Tools-For-Data-Science-Group46"]
 	path = Computational_Tools_for_DS/Computational-Tools-For-Data-Science-Group46
 	url = https://github.com/mathilde-cros/Computational-Tools-For-Data-Science-Group46.git
+[submodule "Project"]
+	path = Computational_Tools_for_DS/Computational-Tools-For-Data-Science-Group46
+	url = https://github.com/mathilde-cros/Computational-Tools-For-Data-Science-Group46.git

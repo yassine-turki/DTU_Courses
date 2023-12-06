@@ -4,5 +4,5 @@
 
 
 [submodule "group_07_project"]
-	path = R_for_Bio_DS/group_07_project
+	path = R_For_Bio_DS/group_07_project
 	url = https://github.com/rforbiodatascience23/group_07_project.git

@@ -10,6 +10,7 @@ editor: visual
 require("tidyverse")
 require("MASS")
 require("gridExtra")
+library("patchwork")
 require("xtable")
 library("circular")
 library("betareg")
@@ -48,19 +49,10 @@ ggplot(data = dat, aes(x = wd30)) +
   theme_classic()
 ```
 
-```{r}
 
-```
 
-finished document. To learn more about Quarto see <https://quarto.org>.
 
 ```{r}
-# Load required libraries
-library(ggplot2)
-library(patchwork)
-
-# Assuming 'dat' is your data frame
-
 # Plot 1
 plot1 <- ggplot(data = dat, aes(y = pow.obs, x = r.day)) +
   geom_point() +

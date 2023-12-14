@@ -1,0 +1,379 @@
+---
+title: "financial project"
+format: html
+editor: visual
+---
+
+## Financial Project
+
+```{r}
+
+```
+
+```{r}
+library(tidyverse)
+library(GGally)
+library(magrittr)
+library(numDeriv)
+library(depmixS4)
+```
+
+```{r}
+finance_data <- read.csv("finance_data.csv", header = T, sep = ";")
+```
+
+```{r}
+summary(finance_data)
+```
+
+We plot the data and see if its distribution is normal or not by using qqnorm plot
+
+```{r}
+finance_data$time <- as.Date(finance_data$time)
+
+# Plot the data
+ggplot(finance_data, aes(x = time, y = SLV)) +
+  geom_line() +
+  labs(title = "SLV Value Over Time", x = "Date", y = "SLV Value")
+
+qqnorm(finance_data$SLV)
+qqline(finance_data$SLV)
+```
+
+```{r}
+y <- finance_data$SLV
+h <- hist(y, breaks = 20, col = "lightgreen", xlab = "SLV values",
+          main = "Histogram with Normal Curve", xlim = c(min(y), max(y)))
+xfit <- seq(min(y), max(y), length = 40)
+yfit <- dnorm(xfit, mean = mean(y), sd = sd(y))
+yfit <- yfit * diff(h$mids[1:2]) * length(y)
+
+lines(xfit, yfit, col = "blue", lwd = 2)
+
+```
+
+```{r}
+## design matrix, and obs
+X <- cbind(1,finance_data$time)
+y <- finance_data$SLV
+n <- length(y)
+#X
+y
+n
+```
+
+```{r}
+glm(y~X, data = finance_data)
+```
+
+```{r}
+muhat = mean(y)
+sigma.hat2 <- 1/n*sum((y-mean(y))^2)
+s2 <- var(y) * (n - 1)/n 
+
+ll.normal <- sum(dnorm(y, mean = mean(y), sd = sqrt(s2), log = TRUE))
+cat("\nMLE\n")
+cat("Muhat:", mean(y),"\n")
+cat("Sigmahat2:", sigma.hat2,"\n")
+cat("\nConfidence interval with 95% confidence:",c(muhat + 1.96*sqrt(s2)/sqrt(n),muhat - 1.96*sqrt(s2)/sqrt(n)),"\n")
+
+cat("\nConfidence interval with 95% confidence:",c(sigma.hat2 - 1.96*sqrt(s2)/sqrt(n),sigma.hat2 - 1.96*sqrt(s2)/sqrt(n)),"\n")
+
+cat("\nNormal log likelihood:", ll.normal,"\n")
+
+
+#AIC of the normal model
+cat("AIC of model:",-2 * ll.normal + 4,"\n")
+sigma2 <- sigma.hat2
+```
+
+We see from the plot that the qqnorm plot is close to the qq line of the normal distribution. However, the tails are heavy and so, we expect that with the Cauchy model, it will solve the problem.
+
+```{r}
+nll.cauchy <- function(theta, data){
+  loc <- theta[1]
+  scale <- theta[2]
+  -sum(dcauchy(data, loc, scale, log = T))
+}
+
+# Using the numerical nlminb optimizer to minimise the negative log likelihood function
+opt <- nlminb(c(0,0.00001), nll.cauchy, lower = c(-Inf, 0.0000001), data = y)
+opt
+```
+
+```{r}
+AIC_cauchy = 2 *opt$objective + 4
+AIC_cauchy
+```
+
+Now test with the t-distribution
+
+```{r}
+t_dist_Profile <- function(theta, df, data){
+    mu <- theta[1]
+    s  <- theta[2]
+    -sum(log(gamma((df+1)/2)/(gamma(df/2) * sqrt(pi * df)*s) * (1 + 1/df*(((data-mu)/s)^2))^(-(df+1)/2)))
+}
+opt <- nlminb(c(0,0.000001), t_dist_Profile, lower = c(-Inf, 0.000001), data = y, df = 4)
+opt
+```
+
+```{r}
+AIC_t_student = 2*opt$objective + 4
+AIC_t_student
+```
+
+Thus, by comparing the 3 models, we can see that the t-student model has the best AIC score (lowest) and it is our final model.
+
+**Assignment 3**
+
+With the same data as in Assignment 1, fit normal mixture models with 2 and 3 components, argue which one is better and compare with the best model from assignment 1
+
+First, we define the transformation of the parameters as in lecture 10. We will optimize based on these parameters
+
+```{r}
+## Natural to working parameters
+norm_mix_pn2pw <- function(m, mu, sigma, delta) {
+  if(sum(delta) >= 1) {
+    print("sum(delta) should be < 1")
+    return()
+  }
+  t_sigma <- log(sigma)
+  t_delta <- log(delta/(1 - sum(delta))) #t_ angiver working parameters
+  return(list(mu = mu, t_sigma = t_sigma, t_delta = t_delta))
+}
+
+## Working to natural parameters
+norm_mix_pw2pn <- function(m, mu, t_sigma, t_delta){
+  if(m == 1){
+    return(exp(t_sigma))
+  }
+  sigma <- exp(t_sigma)
+  delta <- exp(t_delta)/(1 + sum(exp(t_delta)))
+  delta <- c(1 - sum(delta),delta)
+  return(list(mu = mu, sigma = sigma, delta = delta))
+}
+
+```
+
+Then, we define the negative log-likelihood of the mixture model.
+
+```{r}
+nll.mixture <- function(params, m=2, x=finance_data$SLV){
+  if(m == 1) {
+    return(-sum(pnorm(x, params[1], exp(params[2]), log=TRUE))) 
+  }
+  mu <- params[1:m]
+  t_sigma <- params[(m+1):(2*m)]
+  t_delta <- params[(2*m+1):(3*m-1)]
+  n_pars <- norm_mix_pw2pn(m, mu, t_sigma, t_delta)
+  n <- length(x)
+  nll <- 0
+  for(i in 1:n) {
+    nll <- nll - log(sum(n_pars$delta * dnorm(x[i], mu, n_pars$sigma)))
+  }
+  return(nll)
+}
+```
+
+Then, we try the mixture model with 2 normal distributions. We define the initial values for the nlminb as the most intuitive parameters (0.5 for each of the 2 model distribution probabilities) and approximate the mu and sigma close to that of the actual data
+
+```{r}
+## Estimation with 2 distributions
+m <- 2; 
+
+## Initial values
+mu <- mean(finance_data$SLV)*c(1/2,3/2)
+sigma <-sd(finance_data$SLV)*c(1/2,3/2)
+delta <- c(1/2)
+
+## Working parameters
+wpars2 <- norm_mix_pn2pw(m, mu, sigma, delta)
+theta2 <- c(wpars2$mu, wpars2$t_sigma, wpars2$t_delta)
+
+## MLE
+opt2 <- nlminb(theta2, nll.mixture, m = m, x = finance_data$SLV)
+
+## Natural parameters
+npars2 <- norm_mix_pw2pn(m, opt2$par[1:m], opt2$par[(m+1):(2*m)], opt2$par[(2*m+1):(3*m-1)])
+
+npars2 
+opt2$objective
+AIC_2components <- 2*opt2$objective + 2*5
+AIC_2components
+```
+
+To plot the histogram of the distribution of the new model, we define the pdf of it as below
+
+```{r}
+mix.dist <- function(x ,npars){
+  sum(npars$delta * dnorm(x, mean = npars$mu, sd = npars$sigma))
+}
+```
+
+```{r}
+par(mfrow=c(1,1))
+hist(finance_data$SLV, prob=TRUE, nclass=60)
+lines(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), sapply(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), mix.dist, npars=npars2), col=2)
+
+lines(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars2$delta[1]*dnorm(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars2$mu[1], npars2$sigma[1]), col=4)
+
+lines(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars2$delta[2]*dnorm(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars2$mu[2], npars2$sigma[2]), col=4)
+legend("topleft",  c("2 components",'Components seperately'), col=c("red",'blue'), lty=1, cex=0.7)
+```
+
+We now check if increasing the number of components helps the performance
+
+```{r}
+m <- 3;
+
+## Initial values 
+mu <- mean(finance_data$SLV)*c(1/2,1,3/2)
+sigma <- sd(finance_data$SLV)*c(1/2,1,3/2);
+delta <- c(1/3,1/3)
+
+## Working parameters
+wpars <- norm_mix_pn2pw(m, mu, sigma, delta)
+theta <- c(wpars$mu, wpars$t_sigma, wpars$t_delta)
+
+## MLE
+opt3 <-nlminb(theta, nll, m = m, x = finance_data$SLV)
+
+## Natural parameters
+npars3 <- norm_mix_pw2pn(m, opt3$par[1:m], opt3$par[(m+1):(2*m)], opt3$par[(2*m+1):(3*m-1)])
+
+opt3$objective
+AIC_3components <- 2*opt3$objective + 2*8
+AIC_3components
+```
+
+```{r}
+par(mfrow=c(1,1))
+hist(finance_data$SLV, prob=TRUE, nclass=60)
+lines(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), sapply(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), mix.dist, npars=npars3), col=2)
+
+lines(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars3$delta[1]*dnorm(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars3$mu[1], npars3$sigma[1]), col=4)
+
+lines(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars3$delta[2]*dnorm(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars3$mu[2], npars3$sigma[2]), col=4)
+
+lines(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars3$delta[3]*dnorm(seq(min(finance_data$SLV), max(finance_data$SLV), 0.001), npars3$mu[3], npars3$sigma[3]), col=4)
+legend("topleft",  c("3 components",'Components seperately'), col=c("red",'blue'), lty=1, cex=0.7)
+```
+
+We can also compare the 2 models by their deviance (a generalized idea of the least square error)\
+https://en.wikipedia.org/wiki/Deviance\_(statistics)#:\~:text=In%20statistics%2C%20deviance%20is%20a,is%20achieved%20by%20maximum%20likelihood.
+
+Report confidence interval for the 2 component models
+
+```{r}
+H <- hessian(nll.mixture, opt2$par)
+H
+se<- sqrt(diag(solve(H)))
+se
+(CI1 <- opt2$par[1]+c(-1,1)*se[1]*qnorm(0.975))
+(CI2<- opt2$par[2]+c(-1,1)*se[2]*qnorm(0.975))
+```
+
+We can see that the confidence interval of the 2 means of the 2 normal models forming the mixture models are both around 0.
+
+Make a profile likelihood plot of one of the variance parameters in the two-component model.
+
+First, we create a function for the negative log-likelihood of the profile likelihood of sigma 1, using the function above with fixed sigma 1
+
+```{r}
+lp.sigma1 <- function(sigma1, m, x, pars0){
+  fun.tmp <- function(theta, sigma1, m, x){
+    pars <- c(theta[1:m], log(sigma1), theta[-(1:m)])
+    nll.mixture(pars, m, x)
+  }
+  nlminb(pars0, fun.tmp, sigma1 = sigma1, m = m, x = x)$objective    
+}
+```
+
+```{r}
+## Estimation with 2 distributions
+m <- 2; 
+
+## Initial values
+mu <- mean(finance_data$SLV)*c(1/2,3/2)
+sigma <-sd(finance_data$SLV)*c(1/2,3/2)
+delta <- c(0.1)
+
+## Working parameters
+wpars <- norm_mix_pn2pw(m, mu, sigma, delta)
+theta0 <- c(wpars$mu, wpars$t_sigma, wpars$t_delta)
+theta <- c(theta0[1:m],theta0[(m+2):(3*m-1)])
+
+sigma1 <- seq(0.01, 0.1, length=100)
+
+## profile likeihood
+pnll <- sapply(sigma1, lp.sigma1, m = m, x = finance_data$SLV, pars0 = theta)
+pnll
+```
+
+```{r}
+plot(sigma1,exp(-(pnll-min(pnll))),type="l", ylim=c(0,1))
+lines(range(sigma1),
+      c(1,1)*exp(-qchisq(0.95,df=1)/2),col=2,lty=2,lwd=2)
+rug(npars2$sigma,col=2,lwd=2)
+```
+
+### **Fit two and three state normal Hidden Markov Models:**
+
+Assume that there are 2 hidden states, we find the parameters for the transition matrix as well as the probability density function for each state so as to optimize the likelihood of getting the time series data.
+
+```{r}
+model_two_states <- depmix(SLV ~ 1, data = finance_data, nstates = 2, family = gaussian())
+fit_two_states <- fit(model_two_states)
+
+# Similarly, fit a three-state model
+model_three_states <- depmix(SLV ~ 1, data = finance_data, nstates = 3, family = gaussian())
+fit_three_states <- fit(model_three_states)
+
+```
+
+The Bayesian Information Criterion (BIC) is more useful in selecting a correct model while the AIC is more appropriate in finding the best model for predicting future observations.
+
+https://machinelearningabc.medium.com/model-selection-with-aic-bic-10ac9dac4c5a
+
+### **Report 95% confidence intervals for the working parameters**
+
+```{r}
+fit_two_states
+fit_three_states
+```
+
+```{r}
+confint(fit_two_states)
+confint(fit_three_states)
+```
+
+### **Report the natural parameters and interpret the result**
+
+```{r}
+summary(fit_two_states)
+
+```
+
+```{r}
+summary(fit_three_states)
+```
+
+### **Compare distributions**
+
+```{r}
+# Long term distribution of the return
+long_term_dist_two_states <- predict(fit_two_states, newdata = financial_data, what = "response")
+long_term_dist_three_states <- predict(fit_three_states, newdata = financial_data, what = "response")
+
+# 1-step ahead distribution given the current state
+one_step_dist_two_states <- predict(fit_two_states, newdata = your_data, what = "density")
+one_step_dist_three_states <- predict(fit_three_states, newdata = your_data, what = "density")
+
+```
+
+```{r}
+profile(fit_two_states)
+profile(fit_three_states)
+
+```

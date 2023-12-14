@@ -1,0 +1,963 @@
+---
+title: "wind.qmd"
+format: html
+editor: visual
+---
+
+## Quarto
+
+```{r}
+```
+
+```{r}
+library(ggplot2)
+```
+
+```{r}
+require("tidyverse")
+require("MASS")
+require("gridExtra")
+require("xtable")
+library("circular")
+```
+
+```{r}
+library(betareg)
+```
+
+```{r}
+dat <- read.table("tuno.txt", header = TRUE)
+```
+
+```{r}
+nrow(dat)
+```
+
+```{r}
+summary <- summary(dat[c("pow.obs", "ws30", "wd30")])
+# PRINT TABLE
+print(xtable(summary, digits = 5))
+```
+
+```{r}
+# Plot the density 3 numerical variables
+ggplot(data = dat, aes(x = pow.obs)) +
+  geom_density() +
+  labs(title = "wind power production density", y = "Density", x = "Generated power (kW)") +
+  theme_classic()
+
+ggplot(data = dat, aes(x = ws30)) +
+  geom_density() +
+  labs(title = "wind speed density", y = "Density", x = "Wind speed m/s") +
+  theme_classic()
+
+ggplot(data = dat, aes(x = wd30)) +
+  geom_density() +
+  labs(title = "wind direction density", y = "Density", x = "Wind direction") +
+  theme_classic()
+```
+
+```{r}
+
+```
+
+finished document. To learn more about Quarto see <https://quarto.org>.
+
+```{r}
+# Load required libraries
+library(ggplot2)
+library(patchwork)
+
+# Assuming 'dat' is your data frame
+
+# Plot 1
+plot1 <- ggplot(data = dat, aes(y = pow.obs, x = r.day)) +
+  geom_point() +
+  labs(title = "Power throughout the year", y = "Power (kW)", x = "Days") +
+  theme_classic()
+
+# Plot 2
+plot2 <- ggplot(data = dat, aes(y = ws30, x = r.day)) +
+  geom_point() +
+  labs(title = "Speed throughout the year", y = "Speed (m/s)", x = "Days") +
+  theme_classic()
+
+# Plot 3
+plot3 <- ggplot(data = dat, aes(y = wd30, x = r.day)) +
+  geom_point() +
+  labs(title = "Direction through the year", y = "Direction (rad)", x = "Days") +
+  theme_classic()
+
+# Plot 4
+plot4 <- ggplot(data = dat, aes(x = ws30, y = pow.obs)) +
+  geom_point() +
+  labs(title = "(b) Power vs speed", y = "Power (kW)", x = "Wind speed (m/s)") +
+  theme_classic()
+
+# Plot 5
+
+plot5 <- ggplot(data = dat, aes(x = wd30, y = pow.obs)) +
+  geom_point() +
+  labs(title = "(c) Power vs direction", y = "Power (kW)", x = "Wind direction (Rad)") +
+  theme_classic()
+
+# Combine plots into a single PNG
+combined_plot <- wrap_plots(plot1, plot2, plot3, plot4, plot5, nrow = 2)
+ggsave("combined_plot.png", combined_plot, width = 10, height = 8)
+
+```
+
+```{r}
+
+combined_plot <- wrap_plots(plot1, plot2, plot3, plot4, plot5, nrow = 2)
+ggsave("combined_plot.png", combined_plot, width = 10, height = 8)
+```
+
+```{r}
+qqnorm(dat$pow.obs,main =  "Power Q-Q plot")
+qqline(dat$pow.obs) # it has tails
+
+qqnorm(dat$ws30, main = "Speed Q-Q plot")
+qqline(dat$ws30)
+
+qqnorm(dat$wd30, main = "Direction Q-Q plot")
+qqline(dat$wd30)
+
+```
+
+## Data Preprocessing
+
+Normalize the power data
+
+```{r}
+min <- 0
+max <- 5000
+normPow <- (dat$pow.obs-min)/(max-min)
+```
+
+**Likelihood models**
+
+We define the negative log-likelihood function for the 3 models (gamma, log normal, and beta)
+
+```{r}
+#negative log/likelihood
+nll.gamma <- function(params, data){
+  -sum(dgamma(x = data, shape=params[1],rate = params[2], log = T))
+}
+
+nll.lognorm <- function(params, data){
+  -sum(dlnorm(x = data, meanlog=params[1], sdlog= params[2], log = T))
+}
+
+nll.beta <- function(params, data){
+  -sum(dbeta(x = data, shape1=params[1], shape2=params[2], log = T))
+}
+```
+
+Now, we optimize these loss functions to find the MLE
+
+```{r}
+optgamma <- nlminb(c(0.5, 0.1), nll.gamma, lower=c(0,0), data = normPow)
+optlognorm <- nlminb(c(0.5, 0.1), nll.lognorm, lower=c(0,0), data = normPow)
+optbeta <- nlminb(c(0.5, 0.1), nll.beta, lower=c(0,0), data = normPow)
+```
+
+```{r}
+
+wald_confint <- function(opt_result, level = 0.95) {
+  se <- sqrt(diag(vcov(opt_result)))
+  z_value <- qnorm((1 + level) / 2)
+  lower <- coef(opt_result) - z_value * se
+  upper <- coef(opt_result) + z_value * se
+  data.frame(lower = lower, upper = upper)
+}
+
+# Compute Wald confidence intervals
+wald_ci_gamma <- wald_confint(optgamma)
+wald_ci_lognorm <- wald_confint(optlognorm)
+wald_ci_beta <- wald_confint(optbeta)
+
+# Display the results
+print("Wald Confidence Interval for Gamma Distribution:")
+print(wald_ci_gamma)
+
+print("Wald Confidence Interval for Lognormal Distribution:")
+print(wald_ci_lognorm)
+
+print("Wald Confidence Interval for Beta Distribution:")
+print(wald_ci_beta)
+```
+
+Visualize these parameters
+
+```{r}
+optgamma$par
+optlognorm$par
+optbeta$par
+```
+
+AIC check
+
+AIC = 2\*(-log_likelihood) + 2\*number of parameter
+
+```{r}
+aic_gamma = 2 * optgamma$objective + 2 * 2
+aic_gamma
+aic_lognorm = 2 * optlognorm$objective + 2 * 2
+aic_lognorm
+aic_beta = 2 * optbeta$objective + 2 * 2
+aic_beta
+```
+
+```{r}
+# Define functions for probability density functions (PDFs)
+gamma_pdf <- function(x, shape, rate) {
+  dgamma(x, shape = shape, rate = rate, log = FALSE)
+}
+
+lognorm_pdf <- function(x, meanlog, sdlog) {
+  dlnorm(x, meanlog = meanlog, sdlog = sdlog, log = FALSE)
+}
+
+beta_pdf <- function(x, shape1, shape2) {
+  dbeta(x, shape1 = shape1, shape2 = shape2, log = FALSE)
+}
+
+# Create a data frame for plotting
+plot_data <- data.frame(x = normPow)
+
+# Add PDFs for each distribution
+plot_data$gamma <- gamma_pdf(plot_data$x, shape = optgamma$par[1], rate = optgamma$par[2])
+plot_data$lognorm <- lognorm_pdf(plot_data$x, meanlog = optlognorm$par[1], sdlog = optlognorm$par[2])
+plot_data$beta <- beta_pdf(plot_data$x, shape1 = optbeta$par[1], shape2 = optbeta$par[2])
+
+y_axis_limits <- c(0, 6)
+
+# Create the plot with a legend
+gg <- ggplot() +
+  geom_histogram(data = plot_data, aes(x = x, y = ..density..), bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+  geom_line(data = plot_data, aes(x = x, y = gamma, color = "Gamma"), size = 1) +
+  geom_line(data = plot_data, aes(x = x, y = lognorm, color = "Lognormal"), size = 1) +
+  geom_line(data = plot_data, aes(x = x, y = beta, color = "Beta"), size = 1) +
+  labs(title = "Distribution Comparison",
+       subtitle = "Gamma, Lognormal, and Beta distributions with Histogram of Wind power",
+       x = "Value",
+       y = "Density") +
+  theme_minimal() +
+  scale_y_continuous(limits = y_axis_limits) +
+  scale_color_manual(values = c("Gamma" = "red", "Lognormal" = "blue", "Beta" = "green")) +
+  theme(legend.position = c(0.9, 0.8))
+
+
+gg
+```
+
+**Transformation of data**
+
+Define some transformation functions (Box-Cox and 2 formula provided in the assignment)
+
+```{r}
+t_normPow <- normPow
+
+## Define box-cox transformation
+bc.trans <- function(lambda,y){
+  y.l <- (y^lambda-1)/lambda
+  if(lambda==0){y.l <- log(y)}
+  return(y.l)
+}
+formula1.trans <- function(lambda,y){
+  y.l <- (1/(lambda))*log((y^(lambda))/((1-y^lambda)))
+  return(y.l)
+}
+formula2.trans <- function(lambda,y){
+  y.l <- 2*log((y^(lambda))/((1-y)^(1-lambda)))
+  return(y.l)
+}
+```
+
+We transform the data using the transformation defined above and plot the Q-Q norm
+
+```{r}
+lambda <- 0.1
+qqnorm(bc.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.1 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normPow))
+qqnorm(formula1.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.1 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normPow))
+qqnorm(formula2.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.1 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normPow))
+
+lambda <- 0.25
+qqnorm(bc.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.25 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normPow))
+qqnorm(formula1.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.25 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normPow))
+qqnorm(formula2.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.25 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normPow))
+
+lambda <- 0.3
+qqnorm(bc.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.3 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normPow))
+qqnorm(formula1.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.3 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normPow))
+qqnorm(formula2.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.3 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normPow))
+
+lambda <- 0.5
+qqnorm(bc.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.5 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normPow))
+qqnorm(formula1.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.5 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normPow))
+qqnorm(formula2.trans(lambda ,t_normPow), main = "Normal Q-Q plot with lambda = 0.5 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normPow))
+```
+
+```{r}
+# Create a function for the Q-Q plot to avoid repetitive code
+qqplot_function <- function(transform, lambda, main_title) {
+  qqnorm(transform(lambda, t_normPow), main = main_title)
+  qqline(transform(lambda, t_normPow))
+}
+
+# Loop through different lambda values
+lambda_values <- c(0.1, 0.25, 0.3, 0.5)
+
+for (lambda in lambda_values) {
+  # Set up the PNG device for each lambda
+  png(paste0("qq_plots_lambda_", lambda, ".png"), width = 600, height = 400)
+  
+  # Set up the layout with 2 rows and 2 columns
+  par(mfrow = c(2, 2))
+  
+  # Plot for the current lambda value
+  qqplot_function(bc.trans, lambda, paste("Box-Cox transformation, lambda =", lambda))
+  qqplot_function(formula1.trans, lambda, paste("Formula 1 transformation, lambda =", lambda))
+  qqplot_function(formula2.trans, lambda, paste("Formula 2 transformation, lambda =", lambda))
+  
+  # Close the PNG device for the current lambda
+  dev.off()
+}
+
+
+```
+
+We can see from the plots that the transformation of data with formula 1 and lambda of 0.25 and 0.3 give the best result (the line almost perfectly aligns with the q-q plot of the normal distribution).
+
+Thus, we will find the MLE of the normal distribution with this data transformation and compare the AIC value with those of the non-normal model.
+
+Define the negative log-likelihood of the normal distribution
+
+```{r}
+nll.norm <- function(params, data){
+  -sum(dnorm(x = data, mean=params[1], sd= params[2], log = T))
+}
+```
+
+```{r}
+optnorm1 <- nlminb(c(0.5, 0.1), nll.norm, data = formula1.trans(0.25 ,t_normPow))
+optnorm2 <- nlminb(c(0.5, 0.1), nll.norm, data = formula1.trans(0.3 ,t_normPow))
+```
+
+Visualize the parameters of the 2 optimiztions
+
+```{r}
+optnorm1$par
+optnorm2$par
+```
+
+```{r}
+aic_norm1 = 2 * optnorm1$objective + 2 * 2
+aic_norm1
+aic_norm2 = 2 * optnorm2$objective + 2 * 2
+aic_norm2
+```
+
+```{r}
+# Generate transformed data
+transformed_data <- formula1.trans(0.25, t_normPow)
+
+# Create a data frame for plotting
+plot_data_transformed <- data.frame(x = transformed_data)
+
+# Add PDF for normal distribution using optnorm1$par
+normal_pdf <- dnorm(plot_data_transformed$x, mean = optnorm1$par[1], sd = optnorm1$par[2])
+
+# Create the plot
+ggplot(plot_data_transformed, aes(x)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+  geom_line(aes(y = normal_pdf), color = "red", size = 1) +
+  labs(title = "Transformed Data and Normal Distribution",
+       x = "Value",
+       y = "Density") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 0.15))
+
+
+```
+
+```{r}
+# Generate transformed data
+transformed_data <- formula1.trans(0.3, t_normPow)
+
+# Create a data frame for plotting
+plot_data_transformed <- data.frame(x = transformed_data)
+
+# Add PDF for normal distribution using optnorm1$par
+normal_pdf <- dnorm(plot_data_transformed$x, mean = optnorm1$par[1], sd = optnorm1$par[2])
+
+# Create the plot
+ggplot(plot_data_transformed, aes(x)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+  geom_line(aes(y = normal_pdf), color = "red", size = 1) +
+  labs(title = "Transformed Data and Normal Distribution",
+       x = "Value",
+       y = "Density") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 0.25))
+```
+
+**Wind Speed Analysis**
+
+```{r}
+normSpeed <- dat$ws30/(max(dat$ws30)+1)
+```
+
+```{r}
+optgamma <- nlminb(c(0.5, 0.1), nll.gamma, data = normSpeed)
+optlognorm <- nlminb(c(0.5, 0.1), nll.lognorm, data = normSpeed)
+optbeta <- nlminb(c(0.5, 0.1), nll.beta, data = normSpeed)
+
+
+
+aic_gamma = 2 * optgamma$objective + 2 * 2
+aic_gamma
+aic_lognorm = 2 * optlognorm$objective + 2 * 2
+aic_lognorm
+aic_beta = 2 * optbeta$objective + 2 * 2
+aic_beta
+
+
+```
+
+```{r}
+# Create a data frame for plotting
+plot_data <- data.frame(x = normSpeed)
+
+# Add PDFs for each distribution
+plot_data$gamma <- gamma_pdf(plot_data$x, shape = optgamma$par[1], rate = optgamma$par[2])
+plot_data$lognorm <- lognorm_pdf(plot_data$x, meanlog = optlognorm$par[1], sdlog = optlognorm$par[2])
+plot_data$beta <- beta_pdf(plot_data$x, shape1 = optbeta$par[1], shape2 = optbeta$par[2])
+
+y_axis_limits <- c(0, 6)
+
+# Create the plot
+# Create the plot
+ggplot(plot_data, aes(x)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+  geom_line(aes(y = gamma, color = "Gamma"), size = 1) +
+  geom_line(aes(y = lognorm, color = "Lognormal"), size = 1) +
+  geom_line(aes(y = beta, color = "Beta"), size = 1) +
+  labs(title = "Distribution Comparison",
+       subtitle = "Gamma, Lognormal, and Beta distributions with Histogram of Wind speed",
+       x = "Value",
+       y = "Density") +
+  theme_minimal() +
+  scale_color_manual(values = c("Gamma" = "red", "Lognormal" = "blue", "Beta" = "green")) +
+  scale_y_continuous(limits = y_axis_limits) +
+  guides(color = guide_legend(title = "Distributions"))  # Customize the legend 
+
+
+
+t_normSpeed <- normSpeed
+
+
+
+
+```
+
+```{r}
+lambda <- 0.1
+qqnorm(bc.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.1 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normSpeed))
+qqnorm(formula1.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.1 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normSpeed))
+qqnorm(formula2.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.1 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normSpeed))
+
+lambda <- 0.25
+qqnorm(bc.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.25 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normSpeed))
+qqnorm(formula1.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.25 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normSpeed))
+qqnorm(formula2.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.25 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normSpeed))
+
+lambda <- 0.3
+qqnorm(bc.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.3 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normSpeed))
+qqnorm(formula1.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.3 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normSpeed))
+qqnorm(formula2.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.3 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normSpeed))
+
+lambda <- 0.5
+qqnorm(bc.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.5 Box-Cox transformation")
+qqline(bc.trans(lambda ,t_normSpeed))
+qqnorm(formula1.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.5 Formula 1 transformation")
+qqline(formula1.trans(lambda ,t_normSpeed))
+qqnorm(formula2.trans(lambda ,t_normSpeed), main = "Normal Q-Q plot with lambda = 0.5 Formula 2 transformation")
+qqline(formula2.trans(lambda ,t_normSpeed))
+
+```
+
+```{r}
+# Create a function for the Q-Q plot to avoid repetitive code
+qqplot_function <- function(transform, lambda, main_title) {
+  qqnorm(transform(lambda, t_normSpeed), main = main_title)
+  qqline(transform(lambda, t_normSpeed))
+}
+
+# Loop through different lambda values
+lambda_values <- c(0.1, 0.25, 0.3, 0.5)
+
+for (lambda in lambda_values) {
+  # Set up the PNG device for each lambda
+  png(paste0("qq_plots_speed_lambda_", lambda, ".png"), width = 600, height = 400)
+  
+  # Set up the layout with 2 rows and 2 columns
+  par(mfrow = c(2, 2))
+  
+  # Plot for the current lambda value
+  qqplot_function(bc.trans, lambda, paste("Box-Cox transformation, lambda =", lambda))
+  qqplot_function(formula1.trans, lambda, paste("Formula 1 transformation, lambda =", lambda))
+  qqplot_function(formula2.trans, lambda, paste("Formula 2 transformation, lambda =", lambda))
+  
+  # Close the PNG device for the current lambda
+  dev.off()
+}
+
+```
+
+We can see that the Box-Cox transformation with lambda = 0.25 gives the best result.
+
+Thus, we find the normal distribution fit with this transformation of data.
+
+```{r}
+
+optnormspeed <- nlminb(c(0.5, 0.1), nll.norm, data = bc.trans(0.25 ,t_normSpeed))
+
+optnormspeed$par
+
+aic_normspeed = 2 * optnormspeed$objective + 2 * 2
+aic_normspeed
+```
+
+```{r}
+# Generate transformed data
+transformed_data <- bc.trans(0.25, t_normSpeed)
+
+# Create a data frame for plotting
+plot_data_transformed <- data.frame(x = transformed_data)
+
+# Add PDF for normal distribution using optnorm1$par
+normal_pdf <- dnorm(plot_data_transformed$x, mean = optnormspeed$par[1], sd = optnormspeed$par[2])
+
+# Create the plot
+ggplot(plot_data_transformed, aes(x)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "lightblue", color = "black", alpha = 0.7) +
+  geom_line(aes(y = normal_pdf), color = "red", size = 1) +
+  labs(title = "Transformed Data and Normal Distribution",
+       x = "Value",
+       y = "Density") +
+  theme_minimal() +
+  scale_y_continuous(limits = c(0, 1.25))
+```
+
+**Wind Direction**
+
+In this analysis, we introduce Von Mises distribution, which is used for circular data
+
+```{r}
+nll.vonmises <- function(params, data){
+  -sum(dvonmises(x = data, mu=params[1], kappa= params[2], log = T))
+}
+```
+
+```{r}
+angle = dat$wd30
+```
+
+```{r}
+optgamma <- nlminb(c(0.5, 0.1), nll.gamma, data = angle)
+optlognorm <- nlminb(c(0.5, 0.1), nll.lognorm, data = angle)
+optbeta <- nlminb(c(0.5, 0.1), nll.beta, data = angle)
+optvm <- nlminb(c(0.5, 0.1), nll.vonmises, lower=c(0,0), data = angle)
+
+optgamma$par
+optlognorm$par
+optbeta$par
+optvm$par
+
+aic_gamma = 2 * optgamma$objective + 2 * 2
+aic_gamma
+aic_lognorm = 2 * optlognorm$objective + 2 * 2
+aic_lognorm
+aic_beta = 2 * optbeta$objective + 2 * 2
+aic_beta
+aic_vm = 2 * optvm$objective + 2 * 2
+aic_vm
+```
+
+Assignment 2
+
+In a Linear Regression Model, the response (aka dependent/target) variable 'y' is expressed as a linear function/linear combination of all the predictors 'X' (aka independent/regression/explanatory/observed variables). The underlying relationship between the response and the predictors is linear (i.e. we can simply visualize the relationship in the form of a straight line). Also, the error distribution of the response variable should be normally distributed. Therefore we are building a linear model.
+
+GLM models allow us to build a linear relationship between the response and predictors, even though their underlying relationship is not linear. This is made possible by using a link function, which links the response variable to a linear model. Unlike Linear Regression models, the error distribution of the response variable need not be normally distributed. The errors in the response variable are assumed to follow an exponential family of distribution (i.e. normal, binomial, Poisson, or gamma distributions). Since we are trying to generalize a linear regression model that can also be applied in these cases, the name Generalized Linear Models.
+
+Initial model
+
+```{r}
+
+```
+
+```{r}
+dat$pow.obs.norm <- (dat$pow.obs)/5000
+dat$ws30.norm <- (dat$ws30)/max(dat$ws30)
+dat$pow.obs.norm.transform <- formula1.trans(0.25 ,dat$pow.obs.norm)
+```
+
+```{r}
+hist(dat$pow.obs.norm.transform)
+```
+
+First, we make a few non-normal model (without data transformation). In this case, the response variable is the normalized wind power.
+
+From the result of first assignment, with Gamma model as the best fit model (lowest AIC score), we will assume our normalized wind power data follow Gamma distribution and fit the GLM model with 3 link functions
+
+Test with Gamma family
+
+```{r}
+
+```
+
+```{r}
+model1.1 <- glm(pow.obs.norm ~ ws30 + I(ws30^2), data = dat, family = Gamma(link = "identity"))
+model1.2 <- glm(pow.obs.norm ~ ws30 + I(ws30^2), data = dat, family = Gamma(link = "inverse"))
+model1.3 <- glm(pow.obs.norm ~ ws30 + I(ws30^2), data = dat, family = Gamma(link = "logit"))
+```
+
+```{r}
+AIC(model1.1)
+summary(model1.1)
+AIC(model1.2)
+summary(model1.2)
+AIC(model1.3)
+summary(model1.3)
+```
+
+Check the residuals if they follow a normal distribution
+
+```{r}
+model1.1
+model1.2
+model1.3
+```
+
+```{r}
+
+```
+
+```{r}
+plot(model1.1)
+plot(model1.2)
+plot(model1.3)
+```
+
+```{r}
+
+```
+
+Test with the Gaussian model
+
+```{r}
+model2.1 <- glm(pow.obs.norm ~ ws30.norm + I(ws30^2), data = dat, family = gaussian(link = "identity"))
+model2.2 <- glm(pow.obs.norm ~ ws30.norm + I(ws30^2), data = dat, family = gaussian(link = "inverse"))
+model2.3 <- glm(pow.obs.norm ~ ws30.norm + I(ws30^2), data = dat, family = gaussian(link = "logit"))
+```
+
+```{r}
+
+```
+
+```{r}
+summary(model2.1)
+summary(model2.2)
+summary(model2.3)
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+Since it is hard to get the information of the wind direction (we can not say if 90 is between 80 and 100 for example) , we will create 2 new variable (cos and sin of the angle).
+
+```{r}
+dat$wind_cos <- cos(dat$wd30 * pi / 180)
+dat$wind_sin <-sin(dat$wd30 * pi / 180)
+```
+
+Now, we are ready to add the direction information
+
+First, test with the Gamma family
+
+```{r}
+model3.1 <- glm(pow.obs.norm ~ ws30 + I(ws30.norm^2) + I(wind_cos) + I(wind_sin), family = Gamma(link = "logit"), data=dat)
+summary(model3.1)
+model3.2 <- glm(pow.obs.norm ~ ws30 + I(ws30.norm^2) + I(wind_cos) + I(wind_sin), family = Gamma(link = "inverse"), data=dat)
+summary(model3.2)
+```
+
+```{r}
+
+```
+
+We see that the AIC actually decreases. Now, we try to improve the model by adding more explanatory variables
+
+```{r}
+model3.1 <- glm(pow.obs.norm ~ ws30 + I(ws30.norm^2) + I(wind_cos) + I(wind_cos^2) + I(wind_sin) + I(wind_sin^2), family = Gamma(link = "logit"), data=dat)
+summary(model3.1)
+model3.2 <- glm(pow.obs.norm ~ ws30 + I(ws30.norm^2) + I(wind_cos) + I(wind_cos^2) + I(wind_sin) + I(wind_sin^2), family = Gamma(link = "inverse"), data=dat)
+summary(model3.2)
+```
+
+Now we test with the beta model
+
+```{r}
+model4.1 <- betareg(pow.obs.norm ~ ws30.norm + I(ws30.norm^2) + I(wind_cos) + I(wind_sin), data=dat)
+AIC(model4.1)
+summary(model4.1)
+
+model4.2 <- betareg(pow.obs.norm ~ ws30.norm + I(ws30.norm^2), data=dat)
+AIC(model4.2)
+summary(model4.2)
+```
+
+```{r}
+plot(model4.1)
+plot(model4.2)
+```
+
+We can check that model 4.1 (Beta family and adding wind direction information) gives the lowest AIC score, we will use that as the final model.
+
+```{r}
+parameters_best <- summary(model4.1)$coefficients
+parameters_best
+```
+
+Now for the normal model, we use data transformation fro the first assignment (formula 1, lambda = 0.25) to the wind data and fit to the model.
+
+```{r}
+model5.1 <- glm(pow.obs.norm.transform ~ ws30 + I(ws30^2) + wd30, family = gaussian, data=dat)
+summary(model5.1)
+model5.2 <- glm(pow.obs.norm.transform ~ ws30 + I(ws30^2) + I(ws30^3), family = gaussian, data=dat)
+summary(model5.2)
+
+```
+
+```{r}
+predicted_values5.1 <- predict(model5.1, newdata = dat, type = "response")
+
+# Plotting predicted vs actual values
+plot(data$pow.obs.norm, predicted_values5.1, 
+     xlab = "Actual Power", ylab = "Predicted Power", 
+     main = "Predicted vs Actual Power")
+abline(0, 1, col = "red", lty = 2)  # Add a 45-degree line for reference
+
+predicted_values5.2 <- predict(model5.2, newdata = dat, type = "response")
+
+# Plotting predicted vs actual values
+plot(data$pow.obs.norm, predicted_values5.2, 
+     xlab = "Actual Power", ylab = "Predicted Power", 
+     main = "Predicted vs Actual Power")
+abline(0, 1, col = "red", lty = 2)  # Add a 45-degree line for reference
+```
+
+**Assignment 3**
+
+We will use a linear model with wind speed and its series as the explanatory variables.
+
+```{r}
+model = lm(pow.obs.norm.transform ~ ws30 + I(ws30^2), data = dat)
+summary(model)
+AIC(model)
+res = model$residuals
+var(res)
+res_matrix <- function(res){
+  n = length(res) - 1
+  M = matrix(nrow = n, ncol = 2)
+  
+  for (i in 1:n){
+    M[i, 1] = res[i]
+    M[i, 2] = res[i+1]
+  }
+  return(M)
+}
+e <- res_matrix(res)
+print(e) 
+```
+
+```{r}
+nll_multivariate<- function(par, data){
+  sigma = par[1]
+  par[2] -> p
+  Sigma = matrix(data = c(sigma, p*sigma, p*sigma, sigma), nrow = 2, ncol = 2, byrow = T)
+  n = length(res_matrix(res))/2
+  sum = 0
+  
+  for (i in 1:n){
+      x <- data[i,]
+      sum = sum - 1/2*(log(det(Sigma)) + t(x) %*% solve(Sigma) %*% x + 2*log(2*pi))
+  
+  }
+  return(-sum)
+}
+
+opt <- nlminb(start = c(1,.5), nll_multivariate, lower = c(1e-16,1e-16), upper = c(200,0.999), data = e)
+
+
+opt
+```
+
+Wald confidence interval (we compute standard error, multiply by the 95% quantile of the normal distribution to get the range)
+
+```{r}
+hess <- numDeriv::hessian(nll_multivariate, opt$par, data = res_matrix(res))
+CI_sigma <- opt$par[1]+c(-1,1)*sqrt(solve(hess[1,1]))*qnorm(0.975)
+cat("The wald confidence interval for sigma^2 is ", CI_sigma)
+CI_rho = opt$par[2]+c(-1,1)*sqrt(solve(hess[2,2]))*qnorm(0.975)
+cat("The wald confidence interval for rho is ", CI_rho)
+```
+
+Compare the Information matrix calculated by numerical methods with the algebraric form for the Fisher information I
+
+Formula of bivariate normal distribution probability density:\
+https://www.statisticshowto.com/bivariate-normal-distribution/#:\~:text=The%20bivariate%20normal%20distribution%20is,between%20these%20two%20distinct%20elements.
+
+Algebraic fsiher information from a bivariate normal:
+
+I(sigma^2^ , p) = \[\[n/sigma^2^ , -np/sigma^2^ \* (1-p\^2)\], \[-np/sigma^2^ \* (1-p\^2), n(1+p\^2)/(1-p\^2)\^2 \]\]
+
+```{r}
+cat("Numerical matrix values: ", hess)
+
+sigma_MLE <- opt$par[1]
+rho_MLE <- opt$par[2]
+n <- length(res)-1
+
+I1 <- n/sigma_MLE^2
+I2 <- -n*rho_MLE/(sigma_MLE*(1-rho_MLE^2))
+I3 <- I2
+I4 <- n*(1+rho_MLE^2)/(1-rho_MLE^2)^2
+
+cat("\nAlgebraic matrix values: ", matrix(c(I1, I2, I3, I4), nrow = 2, byrow = T))
+```
+
+Contour Plot
+
+```{r}
+sigma = seq(10,13, by = 0.1)
+p = seq(0.15,0.45, by = 0.01)
+
+data = res_matrix(res)
+print(length(sigma))
+Z = matrix(data = NA, nrow = length(sigma), ncol = length(p))
+for (i in 1:length(sigma)){
+  # print(i)
+  for (j in 1:length(p)){
+    
+    Z[i,j] = nll_multivariate(c(sigma[i], p[j]), data)
+
+  }
+  
+}
+A = -Z -(max(-Z))
+confint = c(.99, .975, .95, .9, .8, .5)
+C = exp(-1/2*qchisq(confint, df = 1))
+contour(x = sigma, y = p, exp(A), level=C, xlab = expression(sigma^2), ylab = expression(rho), main = "Countour Plot of confidence regions", labels = confint)
+```
+
+P values for rho. Wald and Likelihood test
+
+With only 1 parameter to test, we choose the likelihood ratio test, Wald is used when we want to test several parameters
+
+LRT
+
+We use profile likelihood with rho be the parameter of interest. Compute the likelihood of 2 cases (rho = rho_hat which maximizes the profile likelihood and rho = 0). The likelihood ratio statistics is then computed by taking 2 times the former likelihood - the later likelihoodmaximizes
+
+```{r}
+nll_multivariate2<- function(sigma, p, data){
+  Sigma = matrix(data = c(sigma, p*sigma, p*sigma, sigma), nrow = 2, ncol = 2, byrow = T)
+  n = length(res_matrix(res))/2
+  sum = 0
+  
+  for (i in 1:n){
+      x <- data[i,]
+      sum = sum - 1/2*(log(det(Sigma)) + t(x) %*% solve(Sigma) %*% x + 2*log(2*pi))
+  
+  }
+  return(-sum)
+}
+
+
+
+```
+
+```{r}
+
+Profile_rho <- function(rho){
+  sigma = nlminb(start = c(1), nll_multivariate2, lower = c(1e-16), upper = c(20), p = rho, data = res_matrix(res))$par
+  
+  nll_multivariate2(sigma, rho, data = res_matrix(res))
+
+
+}
+
+
+opt_rho = nlminb(start = c(0.5), Profile_rho, lower = c(1e-16), upper = c(0.999))
+
+objective = -opt_rho$objective
+h0 = -Profile_rho(0)
+Q = -2*(h0-objective)
+Q
+p = pchisq(Q, df = 1, lower.tail = F)
+cat("P-value for likelihood ratio test:", p, "\n")
+se = sqrt(solve(hess[2,2]))
+
+```
+
+Profile likelihood and quadratic aprroximation
+
+```{r}
+
+rho <- seq(0,0.5, by = 0.01)
+L = sapply(rho,Profile_rho)
+plot(rho, -L-max(-L), 'l', ylab = "Normalised Log Likelihood", xlab = expression(rho))
+C = -1/2*qchisq(1-0.05, df = 1)
+abline(h = C)
+curvature = 1/solve(hess)[2,2]
+lines(rho,-1/2*curvature * (rho - opt_rho$par)^2, 'l', lty = 2)
+```
+
+Estimate AR1 model
+
+```{r}
+ar1 <- ar.ols(pow.obs.norm.transform, order.max = 1, demean = F, intercept = T)
+ar1
+```
+
+```{r}
+
+```

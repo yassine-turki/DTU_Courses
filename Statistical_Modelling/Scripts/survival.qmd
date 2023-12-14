@@ -1,0 +1,844 @@
+---
+title: "survival.qmd"
+format: html
+editor: visual
+---
+
+## Survival Project
+
+
+```{r}
+library(tidyverse)
+library(GGally)
+library(magrittr)
+library(survival)
+```
+
+Read the data to R
+
+```{r}
+act_data <- read.table("actg320.txt", header = T, sep = "\t")
+log_data <-  read.table("Logistic.txt", header = T)
+
+#bind_rows(data.frame(AZT = "Total", AIDS_yes = sum(log_data$AIDS_yes), n= sum(log_data$n)))
+
+#log_data %>% xtable::xtable(caption = "The data contained in Logistic.txt", label = "log_data")
+act_data
+log_data
+```
+
+Summary of the 2 datasets
+
+```{r}
+summary(log_data)
+print("------------------------------------------------------")
+summary(act_data)
+```
+
+```{r}
+par(mfrow = c(2,2))
+
+act_data %>% filter(tx == 0, event == 0) %>%  pull(time) %>% hist(breaks = 100, xlim = c(0, max(act_data$time)+50), main = "tx = 0, event = 0", xlab = "time")
+
+act_data %>% filter(tx == 0, event == 1) %>%  pull(time) %>% hist(breaks = 100, xlim = c(0, max(act_data$time)+50), main = "tx = 0, event = 1", xlab = "time")
+
+act_data %>% filter(tx == 1, event == 0) %>%  pull(time) %>% hist(breaks = 100, xlim = c(0, max(act_data$time)+50), main = "tx = 1, event = 0", xlab = "time")
+
+act_data %>% filter(tx == 1, event == 1) %>%  pull(time) %>% hist(breaks = 100, xlim = c(0, max(act_data$time)+50), main = "tx = 1, event = 1", xlab = "time")
+
+par(mfrow = c(1,2))
+act_data %>%   pull(time) %>% hist(breaks = 100, xlim = c(0, max(act_data$time)+50), main = "Time variable histogram", xlab = "time")
+```
+
+**Fit full dataset**
+
+We aggregate the number of AIDS cases and the total number of patients so that we can fit the binomial distribution to the full dataset.
+
+Below, we define our data and the basic binomial distribution
+
+```{r}
+# Convert the counts in log_data to numeric
+log_data_counts <- log_data[, c("AIDS_yes", "n")]
+
+# Calculate the total number of AIDS cases
+total_AIDS_cases <- sum(log_data_counts[c("AIDS_yes")])
+
+# Calculate the total number of patients
+total_patients <- sum(log_data_counts[c("n")])
+
+total_patients
+total_AIDS_cases
+```
+
+```{r}
+data <- c(total_AIDS_cases, total_patients)
+binomial <- function(data, theta){
+    k <- data[1]
+    n <- data[2]
+    choose(n,k) * theta^k *(1-theta)^(n-k)
+}
+data[2]-data[1]
+```
+
+We define the negative log likelihood of the binomial distribution and perform the optimization on theta
+```{r}
+nll.binomial <- function(params, data){
+    - data[1]*log(params[1]) - (data[2]-data[1])*log(1 - params[1])
+}
+
+opt_binom <- nlminb(start = 0.5, objective = nll.binomial, data = data)
+opt_binom
+```
+```{r}
+```
+
+
+```{r}
+theta <- seq(0,1,0.0001)
+MLE <- data[1]/data[2]
+c <- exp(-1/2*qchisq(1-0.05,1))
+print(c)
+data[1]/data[2]
+plot(theta, binomial(data, theta), "l", main = "Likelihhod of binomial distribution for the full data set", ylab = "Likelihood")
+abline(c,0)
+a <- theta[binomial(data,theta)/max(binomial(data,theta)) > c]
+CI <- c(min(a), max(a))
+cat("Maximum Likelihood estimate: ", MLE, "\n")
+cat("Likelihood Confidence intervals: ", CI)
+```
+
+
+
+```{r}
+```
+
+We can see from the plot, as well as from the theoretical theta that the MLE is 0.2
+
+**Fit for each group**
+
+Get the data for each group
+
+```{r}
+AZT_yes <- c(log_data_counts[1, 1], log_data_counts[1, 2])
+AZT_no <- c(log_data_counts[2, 1], log_data_counts[2, 2])
+
+print(AZT_yes)
+print(AZT_no)
+```
+```{r}
+opt_binom_yes <- nlminb(start = 0.5, objective = nll.binomial, data = AZT_yes)
+opt_binom_no <- nlminb(start = 0.5, objective = nll.binomial, data = AZT_no)
+opt_binom_yes
+opt_binom_no
+```
+
+```{r}
+theta <- seq(0,1,0.00001)
+
+alpha <- 0.05
+c <- exp(-1/2*qchisq(1-alpha,1))
+plot(theta, binomial(AZT_yes, theta), "l", main = "Likelihood functions of the control and test group", ylab = "Likelihood")
+abline(c, 0)
+lines(theta, binomial(AZT_no, theta), "l", col = "red")
+abline(c, 0)
+legend("bottomright",legend = c("With AZT treatment group", "Late AZT treatment group"), fill = c("black", "red"))
+
+MLE_yes <- optimize(binomial, c(0,1), data = AZT_yes, maximum = TRUE)$maximum
+MLE_no <-  optimize(binomial, c(0,1), data = AZT_no, maximum = TRUE)$maximum
+
+a_yes <- theta[binomial(AZT_yes,theta)/max(binomial(AZT_yes,theta)) > c]
+CI_yes <- c(min(a_yes), max(a_yes))
+
+a_no <- theta[binomial(AZT_no,theta)/max(binomial(AZT_no,theta)) > c]
+CI_no <- c(min(a_no), max(a_no))
+
+MLE_yes
+MLE_no
+
+CI_yes
+CI_no
+```
+
+We can see that the MLE for the group with treatment is 0.15 and the group with late treatment is 0.26
+
+**Test if there is a difference between the 2 groups**
+
+t-test
+
+```{r}
+# AZT Group
+patients_A <- 170
+AID_cases_A <- 25
+group_A <- c(rep(1, AID_cases_A), rep(0, patients_A - AID_cases_A))
+
+# Late AZR Group 
+patients_B <- 168
+AID_cases_B <- 44
+group_B <- c(rep(1, AID_cases_B), rep(0, patients_B - AID_cases_B))
+
+# Perform independent two-sample t-test
+t_test_result <- t.test(group_A, group_B)
+
+# Display the results
+print(t_test_result)
+```
+p-value 0.008 < 0.05 (significant level) and thus we reject the null hypothesis that 2 groups have same mean.
+**Estimating the parameters (Beta 0, Beta 1)**
+
+```{r}
+nll.betaparams <- function(params, data){
+    data[2]*log(1+exp(params[1])) - data[1]*params[1] 
+}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+
+```
+
+```{r}
+opt_test <- nlminb(c(0), nll.betaparams, lower = c(-Inf), data = AZT_yes)
+opt_test
+
+print("---------------------------------------------------------------")
+
+opt_control <- nlminb(c(0), nll.betaparams, lower = c(-Inf), data = AZT_no)
+opt_control
+```
+
+As we estimate beta 0 as the parameter in the test group, beta 0 + beta 1 as parameter in the control group, we can derive beta 1 as the difference between the 2 estimated parameters of the 2 tests
+
+```{r}
+beta_1 <- opt_test$par[1] - opt_control$par[1]
+beta_1
+```
+
+```{r}
+p0 <- exp(opt_test$par[1])/(1+exp(opt_test$par[1]))
+p1 <- exp(opt_control$par[1])/(1+exp(opt_control$par[1]))
+
+p0
+p1
+```
+
+```{r}
+
+logL_partial <- function(b0, b1, data, AZT = TRUE){
+    y = if (AZT) {data[1,2]} else {data[2,2]} %>% as.numeric()
+    n = if (AZT) {data[1,3]} else {data[2,3]} %>% as.numeric()
+    false = n-y
+    
+    y*((b0 + b1 * AZT) * 1 - log(1+exp(b0+b1*AZT))) + false*((b0 + b1 * AZT) * 0 - log(1+exp(b0+b1*AZT)))
+}
+
+logL <- function(theta, data){
+     - (logL_partial(theta[1], theta[2],data, F) + logL_partial(theta[1],theta[2],data, T))
+}
+
+
+opt <- nlminb(c(0, 0), logL, lower = c(-Inf,-Inf), data = log_data)
+
+p0 <- exp(opt$par[1])/(1+exp(opt$par[1]))
+p1 <- exp(opt$par[1] + opt$par[2])/(1+exp(opt$par[1] + opt$par[2]))
+
+
+```
+
+```{r}
+p0
+p1
+```
+
+Now, we find the optimum beta 1 with a different approach, using profile likelihood where beta 1 is the parameter of interest.
+
+```{r}
+logL_b1 <- function(theta, b1, data){
+      -(logL_partial(theta[1], b1,data, F) + logL_partial(theta[1],b1,data, T))
+}
+
+profile_b1 <- function(b1, data){
+  opt <- nlminb(c(0), logL_b1, lower = c(-Inf), data = log_data, b1 = b1)
+  # optimize(logL)
+  b0 <- opt$par
+  -logL_b1(c(b0),b1,data)
+}
+
+
+b1 <- seq(-2,0,0.01)
+alpha <- 0.05
+c <- exp(-1/2*qchisq(1-alpha,1))
+p = c()
+for (i in 1:length(b1)){
+  p[i] = exp(profile_b1(b1[i], log_data))
+}
+
+MLE_b1 <- optimize(profile_b1, c(-5,5), data = log_data, maximum = T)$maximum
+
+plot(b1, p/max(p), 'l', main = "Profile likelihood for beta1", ylab = "Normalised likelihood")
+abline(c, 0)
+# abline(v = MLE_b1)
+
+
+
+a_b1 <- b1[p/max(p) > c]
+CI_b1 <- c(min(a_b1), max(a_b1))
+
+print(opt$par)
+
+```
+
+```{r}
+cat("The maximum likelihood estimates of p0 and p1 are: p0 = ", p0, " p1 = ", p1, "\n")
+cat("The maximum profile likelihood estimate of b1 is:  ", MLE_b1, "\n")
+cat("With confidence intervals: ", CI_b1, "\n")
+print(c)
+```
+
+How many patients got AIDS or died in the two treatment groups? What is the proportion of patients that got AIDS or died in the two group? Other relevant number that could be calculated?**
+
+```{r}
+act_data <- select(act_data, time, event, tx)
+
+summary_table <- table(act_data$event, act_data$tx) %>% 
+  rbind("Total" = colSums(.)) %>% 
+  cbind("Total" = rowSums(.)) 
+names(attributes(summary_table)$dimnames) <- c("Event", "Treatment")
+
+cat("Summary table:\n")
+summary_table
+```
+
+```{r}
+event_0 <- filter(act_data, event == 0)$time
+#event_0
+```
+
+Fit an exponential distribution, using numerical methods, to the time of event (time) in the data set (some of the data is censored)
+
+```{{=latex}}
+The variable 'event' describes wheter or not the patient has gotten AIDS (1) or not (0). However, some patients left the study, or the study was terminated before the patients had developed AIDS. Hence for the healthy patients event = 0 the time of event is longer than the time reported.
+
+Therefore, we have to work with 2 likelihood functions: $L_{event = 1}(\theta)$ and $L_{event = 0}(\theta)$.
+
+$L_{event = 1}(\theta)$ is the usual likelihood function: $L_{event = 1} = \Pi_i f_{\theta} (x_i)$.
+
+In the latter case we have to use the survival function $g(x) = 1 - F(x) = 1 - P(X\leq x_i)$ instead of the density. $L_{event = 0}(\theta) = \Pi_i g_{\theta}(x_i) = \Pi_i ( 1 - P(X<x_i))$.
+
+The full likelihood is hence $L(\theta) = L_{event = 0}(\theta) L_{event = 1}(\theta)$
+```
+
+First, we define the negative log-likelihood for the survival data (taking into account that for the event = 0, it just implies that the patient has not died/get AIDS at time t).
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+```{r}
+
+```
+
+In short, we can derive the function in a simpler manner as below
+
+```{r}
+nll <- function(theta, data){
+  time <- data$time
+  event <- data$event
+  sum(event)*log(theta) - theta * sum(time)
+  
+}
+
+opt <- optimize(nll, c(1e-10, 1e-1), data = act_data, maximum = T)
+```
+
+```{r}
+
+theta <- seq(2e-4,6e-4, 1e-5)
+
+
+plot(theta, sapply(theta, nll, data = act_data) - opt$objective, 'l', ylab = "Log likelihood", main = expression(paste("Log-likelihood for ", theta, " using all the data")), xlab = expression(theta))
+c_l <- -1/2 * qchisq(1-0.05, df = 1)
+abline(h = c_l)
+abline(v = opt$maximum)
+
+
+CI_array <- theta[sapply(theta, nll, data = act_data) - opt$objective > c_l]
+cat("The MLE is ", opt$maximum, " and the CI goes from ", min(CI_array), " to ", max(CI_array))
+
+
+```
+
+```{r}
+opt0 <- optimize(nll, c(0,1), data = act_data %>% filter(tx == 0), maximum = T)
+opt1 <- optimize(nll, c(0,1), data = act_data %>% filter(tx == 1), maximum = T)
+theta <- seq(1e-4,7e-4, 1e-6)
+
+plot(theta, nll(theta, act_data %>%  filter(tx == 0)) - opt0$objective, 'l', main = expression(paste("Log-likelihood for ", theta, " in the two treatment groups")), ylab = "Log likelihood",xlab = expression(theta), ylim = c(-10,0))
+lines(theta, nll(theta, act_data %>%  filter(tx == 1)) - opt1$objective, 'l', col = 'red')
+legend("bottomright",legend = c("tx = 0", "tx = 1"), fill = c("black", "red"))
+abline(h = c_l)
+abline(v = opt0$maximum)
+abline(v = opt1$maximum)
+
+CI_tx0_array <- theta[sapply(theta, nll, data = act_data %>% filter(tx == 0)) - opt0$objective > c_l]
+CI_tx0 <- c(min(CI_tx0_array), max(CI_tx0_array))
+
+CI_tx1_array <- theta[sapply(theta, nll, data = act_data %>% filter(tx == 1)) - opt1$objective > c_l]
+CI_tx1 <- c(min(CI_tx1_array), max(CI_tx1_array))
+
+scale <- 1e4
+cat("The MLE for tx = 0 is ", opt0$maximum*scale, " with confidence interval:", CI_tx0*scale, "\n")
+cat("The MLE for tx = 1 is ", opt1$maximum*scale, " with confidence interval:", CI_tx1*scale, "\n")
+
+```
+
+```{r}
+nll_beta <- function(theta, data){
+  rate0 <- exp(-theta[1])
+  rate1 <- exp(-(theta[1] + theta[2]))
+  
+  -(nll(rate0, data %>% filter(tx == 0)) + nll(rate1, data %>% filter(tx == 1)))
+  
+}
+
+nlminb(c(0,0), nll_beta, lower = c(-Inf, -Inf), data = act_data)
+
+
+```
+
+```{r}
+nll_profile <- function(b1, data){
+  nll_b0 <- function(b0, b1, data){
+  rate0 <- exp(-b0)
+  rate1 <- exp(-(b0 + b1))
+  
+  -(nll(rate0, data %>% filter(tx == 0)) + nll(rate1, data %>% filter(tx == 1)))
+  }
+  b0 = nlminb(0, nll_b0, lower = -Inf, data = act_data, b1 = b1)$par
+  # b0 = optimise(nll_b0,)
+  
+  nll_b0(b0,b1,data)
+}
+
+c <- -1/2*qchisq(1-alpha,1)
+c
+
+opt_b1 <- nlminb(c(0), nll_profile, lower = c(-Inf), data = act_data)
+b1 <- seq(0,2, 0.01)
+
+plot(b1, -sapply(b1, nll_profile, data = act_data)+opt_b1$objective , 'l', main = expression(paste("Profile likelihood for ", beta[1])), ylab = "Log-likelihood", xlab = expression(beta[1]))
+abline(h= c)
+abline(v = opt_b1$par)
+
+
+CI_array_b1 <- b1[-sapply(b1, nll_profile, data = act_data)+opt_b1$objective > c]
+cat("The MLE of b1 is ", opt_b1$par, " and the CI is: [", min(CI_array_b1), ",", max(CI_array_b1), "]")
+
+
+
+d = act_data$event
+t = act_data$tx
+y = act_data$time
+-(log(sum(t*d)/(sum(y*t))) + 7.624363 )
+
+a = sum(d-d*t)
+b = sum(d*t)
+c = sum(y*(1-t))
+d = sum(y*t)
+
+-log((a+b)/(c+d*exp(-0.6991719)))
+```
+
+Now we perform the profile likelihood with beta 1 as the interest parameter and optimization on beta 0
+
+```{r}
+ll_profile <- function(b1, data){
+  y = data$time
+  d = data$event
+  t = data$tx
+  
+  a = sum(d-d*t)
+  b = sum(d*t)
+  c = sum(y*(1-t))
+  d2 = sum(y*t)
+  
+  MLE_b0 = -log( (a+b)/(c+d2*exp(-b1)) )
+  
+  theta0 = exp(-MLE_b0)
+  theta1 = exp(-(MLE_b0 + b1))
+  
+  a * log(theta0) + b * log(theta1) - c * theta0 - d2 * theta1
+  
+}
+
+b1 <- seq(0,2.5,0.1)
+opt = optimize(ll_profile, c(-10,10), data = act_data, maximum = T)
+plot(b1, sapply(b1, ll_profile, data = act_data) - opt$objective, 'l', xlim = c(0,2), ylim = c(-10,0), main = "Profile likelihood of b1", ylab = "Normalised log likelihood")
+# lines(b1, -sapply(b1, nll_profile, data = act_data)+opt_b1$objective)
+abline(h = c_l)
+
+
+y = act_data$time
+d = act_data$event
+t = act_data$tx
+a = sum(d-d*t)
+b = sum(d*t)
+c = sum(y*(1-t))
+d2 = sum(y*t)
+
+
+```
+
+```{r}
+opt_bs <- nlminb(c(0,0), nll_combined, lower = c(-Inf, -Inf), data = act_data)
+CI_wald <- function(theta_hat, info){theta_hat+c(-1,1)*qnorm(1-0.05/2)*sqrt(1/info)}
+
+hess <- numDeriv::hessian(nll_combined, opt_bs$par, data = act_data)
+
+cat("95% wald confidence interval for b0 is: ", CI_wald(opt_bs$par[1], hess[1,1]))
+cat("\n95% wald confidence interval for b1 is: ", CI_wald(opt_bs$par[2], hess[2,2]))
+
+```
+```{r}
+log
+```
+Odds ratios are used to compare the relative odds of the occurrence of the outcome of interest (e.g. disease or disorder), given exposure to the variable of interest (e.g. health characteristic, aspect of medical history). The odds ratio can also be used to determine whether a particular exposure is a risk factor for a particular outcome, and to compare the magnitude of various risk factors for that outcome.
+
+OR=1 Exposure does not affect odds of outcome
+OR>1 Exposure associated with higher odds of outcome
+OR<1 Exposure associated with lower odds of outcome
+```{r}
+nll.logistic_by_part <- function(theta, data, AZT = TRUE){
+    y = if (AZT) {data[1,2]} else {data[2,2]} %>% as.numeric()
+    n = if (AZT) {data[1,3]} else {data[2,3]} %>% as.numeric()
+    false = n-y
+    
+    -y*(theta[1]+theta[2]*AZT) + false*(log(1+exp(theta[1]+theta[2]*AZT)))
+}
+
+nll.logistic <- function(theta, data){
+    nll.logistic_by_part(theta, data, TRUE) + nll.logistic_by_part(theta, data, FALSE)
+}
+```
+Fit a logistic regression model for the binary outcome AIDS=”yes” versus
+AIDS=”no” with the explanatory variable treatment with AZT (Yes,
+NO). Present the odds ratio for the effect of AZT on AIDS with 95%
+confidence interval and interpret the result in words.
+```         
+```
+```{r}
+opt_logistic <- nlminb(c(0, 0), nll.logistic, lower = c(-Inf, -Inf), data = log_data)
+opt_logistic
+exp(opt_logistic$par[2])
+```
+
+
+```{r}
+opt1 <- nlminb(c(0, 0), nll.logistic_by_part, lower = c(-Inf, -Inf), data = log_data, AZT = T, hessian = T)
+opt2 <- nlminb(c(0, 0), nll.logistic_by_part, lower = c(-Inf, -Inf), data = log_data, AZT = F, hessian = T)
+opt1$par
+opt2$par
+```
+Using an online calculator for odd ratio with 2 properties bring getting AZT treatment and getting AID, matrix of presence of properties [[25, 145], [44, 124]], we get the odd ratio of 0.49 with confidence interval 95% be 0.28, 0.84. The value 0.49 means that there is about half the chance of getting AIDS when you get AZT compared to if you don't get AZT, or the probability of getting AID if you get the treatment is a third.
+```{r}
+```
+Test the effect of no AZT using Likelihood Ratio Test:
+We have 2 model, 1 with only 1 parameter (intercept), the second has 2 parameters (theta[1], theta[2]).
+We have already fit the model with 2 parameters above and get the maximized likelihood as the minimum of the objective of the negative log likelihood function.
+In order to compute the likelihood ratio using the formula:
+LRT=−2×(log-likelihood of Model 1 − log-likelihood of Model 2),
+we need to fit the restricted model.
+
+```{r}
+nll.logistic_by_part_1 <- function(theta, data, AZT = TRUE){
+    y = if (AZT) {data[1,2]} else {data[2,2]} %>% as.numeric()
+    n = if (AZT) {data[1,3]} else {data[2,3]} %>% as.numeric()
+    false = n-y
+    
+    -y*(theta[1]) + false*(log(1+exp(theta[1])))
+}
+
+nll.logistic_1 <- function(theta, data){
+    nll.logistic_by_part_1(theta, data, TRUE) + nll.logistic_by_part_1(theta, data, FALSE)
+}
+```
+
+
+```{r}
+opt_logistic1 <- nlminb(c(0), nll.logistic_1, lower = c(-Inf), data = log_data, hessian=TRUE)
+opt_logistic1
+```
+As the result above, we can compute the LRT:
+
+```{r}
+LRT <- -2*(-153.16 + 147.3)
+LRT
+```
+
+
+```{r}
+alpha <- 0.05  # Significance level (adjust as needed)
+df <- 1
+critical_value <- qchisq(1 - alpha, df)  # Chi-squared critical value
+p_value <- pchisq(LRT, df, lower.tail = FALSE)  # P-value from chi-squared distribution
+print(critical_value)
+if (LRT > critical_value) {
+  cat("Reject the null hypothesis (significant result).\n")
+} else {
+  cat("Do not reject the null hypothesis (not significant).\n")
+}
+
+cat("P-Value:", p_value, "\n")
+```
+
+We conclude that we reject the null hypothesis that the AZT has no effect on the result
+
+Now, we move on to the Wald test
+Null hypothesis: The AZT has no effect or theta[2] is 0
+
+First, we compute the score error of theta[2]
+```{r}
+hess <- numDeriv::hessian(nll.logistic, opt_logistic$par, data = log_data)
+hess
+se <- sqrt(solve(hess)[2,2])
+se
+```
+
+
+```{r}
+theta2_estimate <- -0.97
+se_theta2 <- se
+
+# Calculate Wald statistics
+wald_statistic_theta2 <- (theta2_estimate / se_theta2)^2
+print(wald_statistic_theta2)
+
+# Degrees of freedom 
+df_theta2 <- 1
+
+# Critical values for each test
+alpha <- 0.05
+critical_value_theta2 <- qchisq(1 - alpha, df_theta2)
+
+
+cat("\nWald Statistic for Theta2:", wald_statistic_theta2, "\n")
+if (wald_statistic_theta2 > critical_value_theta2) {
+  cat("Reject the null hypothesis for Theta2 (significant result).\n")
+} else {
+  cat("Do not reject the null hypothesis for Theta2 (not significant).\n")
+}
+```
+Thus, we reject the null hypothesis that AZT has no effect
+
+Now, we move on to the Score Test
+
+```{r}
+# Calculate the score vector
+score_vector <- numDeriv::grad(nll.logistic, opt$par, data = log_data)
+
+# Calculate the observed information matrix
+obs_info_matrix <- -solve(hess)
+
+# Calculate the score test statistic
+score_test_statistic <- t(score_vector) %*% solve(obs_info_matrix) %*% score_vector
+
+# Degrees of freedom for the chi-squared distribution
+df <- ncol(hess)  # Number of parameters
+
+# Calculate the p-value
+p_value <- 1 - pchisq(score_test_statistic, df)
+
+# Print or use the test statistic and p-value as needed
+cat("Score Test Statistic:", score_test_statistic, "\n")
+cat("Degrees of Freedom:", df, "\n")
+cat("P-value:", p_value, "\n")
+
+
+```
+```{r}
+```
+We now move on to the Survival analysis
+
+1. How many patients got AIDS or died in the two treatment groups? And how long was the total follow-up time in the two groups?
+
+The total follow up time is the time from the beginning of the study till the end of the study t_f - t_0 or the max time observed.
+```{r}
+tx0 = act_data %>% filter(tx == 0)
+tx1 = act_data %>% filter(tx == 1)
+ftime0 = tx0$time %>% max()  # Total follow up time
+ftime1 = tx1$time %>% max()  # Total follow up time
+nevents0 = tx0$event %>% sum() # Number of events in no treatment group
+nevents1 = tx1$event %>% sum() # Number of events in treatment group
+cat("The total follow up time in the treatment groups was: ", ftime1, ".The number of events was: ", nevents1, "\nThe total follow up time in the no treatment group was: ", ftime0, ".The number of events was: ", nevents0)
+```
+
+2. Plot the survival functions in the two treatment groups. Which group seems to be doing best?
+3. Plot the cumulative incidence functions for the two groups. Which plot would you prefer?
+```{r}
+# KM estimate of survival function for both groups (tx == 0 and tx == 1) with log-log confidence intervals
+Surv.Bygroup <- survfit(Surv(time,event == 1) ~ tx, conf.type = "log-log",
+                        data = act_data)
+
+# Plotting
+par(mfrow = c(1,2))
+plot(Surv.Bygroup, col = 2:3, lwd = 2, conf.int =  T, ylim = c(0.8,1),
+     xlab = "Time (days)",
+     ylab = "Estimated Survival Prob.", main = "Kaplan Meier Estimate of Survival Function")
+
+legend("bottomleft", legend = c("Treatment", "No treamtent"), col = c("green", "red"), lty = c(1,1))
+
+plot(Surv.Bygroup, col = 2:3, conf.int = T, fun=function(x) { 1- x }, las = 1, 
+     xlab = "Time (days)", 
+     ylab = "Estimated Prob. of AIDS / Death", lwd = 2, ylim = c(0,0.2), main = "Cumulative Incidence Function")
+legend("topleft", legend = c("Treatment", "No treamtent"), col = c("green", "red"), lty = c(1,1))
+```
+4. Compare the survival in the two treatment groups using a log-rank test
+
+```{r}
+# Load the survival package
+library(survival)
+
+
+# Create a survival object
+surv_data <- with(act_data, Surv(time, event))
+
+# Print summary statistics
+summary(surv_data)
+
+
+# Create a Kaplan-Meier survival curve
+surv_fit <- survfit(surv_data ~ tx, data = act_data)
+
+# Plot the survival curves
+plot(surv_fit, col = c("blue", "red"), lty = c(1, 2), xlab = "Time", ylab = "Survival Probability")
+legend("topright", legend = c("Group 0", "Group 1"), col = c("blue", "red"), lty = c(1, 2))
+
+
+# Create a cumulative incidence plot
+cum_inc_fit <- survfit(Surv(time, event) ~ tx, data = act_data)
+
+# Plot the cumulative incidence curves
+plot(cum_inc_fit, col = c("blue", "red"), lty = c(1, 2), xlab = "Time", ylab = "Cumulative Incidence")
+legend("topright", legend = c("Group 0", "Group 1"), col = c("blue", "red"), lty = c(1, 2))
+
+
+
+# Perform log-rank test
+logrank_test <- survdiff(Surv(time, event) ~ tx, data = act_data)
+print(logrank_test)
+
+```
+
+The log rank test is a statistical methodology for comparing the distribution of time until the occurrence of an event of interest in independent groups. In toxicologic pathology, the most common event of interest is death or occurrence of a tumor, but it could be any other event that occurs only once in an individual. The elapsed time from initial treatment or observation until the event is the event time, often referred to as “survival time,” even when the event is not “death.”
+
+The null hypothesis tested by the log-rank test is that of equal event time distributions among groups. Rejection of the null hypothesis indicates that the event rates differ among groups at one or more time points during the study.
+
+The principle behind the log-rank test for comparison of two life tables is simple; if there were no difference between the groups, the total deaths occurring at any time should split between the two groups at that time. So if the numbers at risk in the first and second groups in (say) the sixth month were 70 and 30, respectively, and 10 deaths occurred in that month we would expect
+
+10*(70/(70+30)) = 7 of these deaths to have occurred in the first group, and
+
+10*(30/(70+30)) = 3 of the deaths to have occurred in the second group.
+
+https://sphweb.bumc.bu.edu/otlt/mph-modules/bs/bs704_survival/BS704_Survival5.html#:~:text=among%20independent%20groups.-,The%20Log%20Rank%20Test,identical%20(overlapping)%20or%20not. (explanation with example of log-rank test in survival analysis)
+```{r}
+survdiff(Surv(time, event == 1) ~ tx, data = act_data, rho = 1)
+```
+Thus, we reject the null hypothesis that the treatment has no effect on the DISTRIBUTION of the the survival time (p <0.05)
+
+
+
+PARAMETRIC SURVIVAL MODEL
+
+
+
+
+Fit parametric survival models containing treatment (tx) and CD4 count (cd4) as explantory variables
+
+Try using the exponential, Weibull and log-logistic models, which
+one gave the best fit (and why)?
+```{r}
+act_data <- read.table("actg320.txt", header = T, sep = "\t")
+```
+
+
+```{r}
+mod_exp <- survreg(Surv(time, event == 1) ~ tx + cd4, data = act_data,
+                 dist = "exponential")
+mod_weibull <- survreg(Surv(time, event == 1) ~ tx + cd4, data = act_data,
+                 dist = "weibull")
+mod_loglogistic <- survreg(Surv(time, event == 1) ~ tx + cd4, data = act_data,
+                 dist = "loglogistic")
+summary(mod_exp)
+summary(mod_weibull)
+summary(mod_loglogistic)
+```
+
+
+```{r}
+cat("Expontential:",AIC(mod_exp), "Weibull:",AIC(mod_weibull), "Log Logistic:",AIC(mod_loglogistic))
+```
+We see that the Log Logistic has the lowest AIC score, which indicates that it is the best fit model.
+```{r}
+summary(mod_loglogistic)$table
+```
+
+```{r}
+estimator = summary(mod_loglogistic)$table[,1]
+std = summary(mod_loglogistic)$table[,2]
+# Confidence intervals 
+CI1 = est[1] + c(-1,1) * qnorm(0.975) * std[1]
+CI2 = est[2] + c(-1,1) * qnorm(0.975) * std[2]
+CI3 = est[3] + c(-1,1) * qnorm(0.975) * std[3]
+CI4 = est[4] + c(-1,1) * qnorm(0.975) * std[4]
+cat(CI1, CI2, CI3, CI4)
+# Table of estimates and confidence intervals
+(C = cbind(est,matrix(c(CI1, CI2, CI3, CI4), nrow = 4  , byrow = T )) %>% data.frame() %>% plyr::rename(., c("est" = "Estimates", "V2" = "Lower Bound","V3" = "Upper Bound")))
+```
+Using your model compute the time ratio for the treatment effect. Similarly, compute the time ratio for the effect of increasing the CD4 count with 50. In both cases uncertainty evaluation (e.g. confidence intervals) should be included. Interpret the results in words
+```{r}
+C[2,2]
+exp(c(estimator["tx"], C[2,2], C[2,3]))
+exp(c(estimator["cd4"]*50, C[3,2]*50, C[3,3]*50))
+```
+We can conclude that:
+
+The median time to event (t50) is 2.32 higher in the treatment group.
+
+The median time to even (t50) is 2.82 higher with an increase of 50 in cd4. People with higher cd4 lives longer.
+```{r}
+mod_loglogistic$linear.predictors
+```
+
+```{r}
+coxsnell1 <- log(1+exp((log(act_data$time) - mod_loglogistic$linear.predictors)/mod_loglogistic$scale))
+act_data$CS1 <- coxsnell1
+
+SurvKM0 <- survfit(Surv(CS1, event == 1)~1, data = act_data)
+plot(SurvKM0$time, -log(SurvKM0$surv), main = "Cox Snell - Log Logistic", xlab = "Cox Snell residuals", ylab = "-log(S(t))")
+
+abline(a = 0, b = 1, lty = 2, lwd = 3, col = "red")
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```

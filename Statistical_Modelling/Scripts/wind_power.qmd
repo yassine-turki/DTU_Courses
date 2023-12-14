@@ -7,23 +7,14 @@ editor: visual
 ## Quarto
 
 ```{r}
-```
-
-```{r}
-library(ggplot2)
-```
-
-```{r}
 require("tidyverse")
 require("MASS")
 require("gridExtra")
 require("xtable")
 library("circular")
+library("betareg")
 ```
 
-```{r}
-library(betareg)
-```
 
 ```{r}
 dat <- read.table("tuno.txt", header = TRUE)
